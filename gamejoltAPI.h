@@ -10,23 +10,44 @@ class GamejoltAPI : public Reference
 public:
 	GamejoltAPI();
 	~GamejoltAPI();
+	enum Status
+	{
+		STATUS_OK,
+		STATUS_NOT_CONNECTED,
+		STATUS_CANT_CONNECT,
+		STATUS_CANT_READ_RESPONSE,
+		STATUS_REQUEST_FAILED, //means response came back negative
+		STATUS_PARSING_ERROR,
+		STATUS_CANT_SEND_REQUEST,
+		STATUS_NO_RESPONSE,
+		STATUS_NO_CREDENTIALS
+	};
 	bool Init(String gameId, String privateKey);
 	bool Login(String username, String userToken);
 	//if scboard blank, default main scoreboard is used
-	//if guestName blank, username is used (from Login)
+	//if guestName blank, username is used (from Login())
 	bool SendScore(int score, String scboardId = "", 
 			String guestName = ""); 
 	int GetUserBest();
 	int GetGuestBest(String guestName);
 	void Update();
-	inline String GetStatus()
+	inline String GetStatusStr()
+	{
+		return m_statusStr;
+	}
+	inline Status GetStatus()
 	{
 		return m_status;
+	}
+	inline HTTPClient::Status GetHttpStatus()
+	{
+		return m_client.get_status();
 	}
 	void SetScoreStr(const String& str) //default (ex): "100 points"
 	{
 		m_scoreStr = str;
 	}
+	
 private:
 	OBJ_TYPE(GamejoltAPI, Reference);
 
@@ -37,9 +58,12 @@ private:
 	//player info
 	String m_userName;
 	String m_userToken;
-	String m_status;
+	String m_statusStr;
 	String m_scoreStr;
+	Status m_status;
 
+	Dictionary Request(String& url);
+	Dictionary MakeRequest(String& url);
 	Dictionary ReadResponse();
 	String ChunkToStr(const ByteArray& bytes);
 	//translates from keypair of gamejolt api to dictionary
@@ -48,16 +72,17 @@ private:
 	private:
 		String m_currStr;
 		int ind;
-		String* mp_status;
+		String* mp_statusStr;
+		Status* mp_status;
 
 		String ReadKey(); //reads next key, increments ind
 		String ReadValue(); //reads next value, increments ind
 	public:
-		KeyPairParser(String* status) : ind(0), mp_status(status) {}
+		KeyPairParser(String* statusStr, Status* status) : 
+			ind(0), mp_statusStr(statusStr), mp_status(status) {}
 		Dictionary Parse(const String& str);
 	} m_parser;
 
-	Dictionary Request(String& url);
 	String FixStr(const String& str);
 protected:
 	static void _bind_methods();	

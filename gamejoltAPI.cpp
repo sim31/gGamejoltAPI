@@ -1,12 +1,13 @@
 #include "gamejoltAPI.h"
-#include <iostream>
 #include "core/os/os.h"
 #include "core/typedefs.h"
 #include "core/error_macros.h"
 #include "core/io/json.h"
 
-GamejoltAPI::GamejoltAPI() : m_status("ok"), m_parser(&m_status),
-	m_userName(""), m_userToken(""), m_scoreStr("points")
+GamejoltAPI::GamejoltAPI() : m_statusStr("ok"), 
+	m_parser(&m_statusStr, &m_status), m_userName(""), 
+	m_userToken(""), m_scoreStr("points"), 
+	m_status(STATUS_NOT_CONNECTED)
 {
 }
 
@@ -22,20 +23,42 @@ void GamejoltAPI::_bind_methods()
 	ObjectTypeDB::bind_method("init", &GamejoltAPI::Init);
 	ObjectTypeDB::bind_method("send_score", &GamejoltAPI::SendScore, 
 			0, "", "");
+	ObjectTypeDB::bind_method("get_status_str", &GamejoltAPI::GetStatusStr);
 	ObjectTypeDB::bind_method("get_status", &GamejoltAPI::GetStatus);
+	ObjectTypeDB::bind_method("get_http_status", 
+			&GamejoltAPI::GetHttpStatus);
+	ObjectTypeDB::bind_integer_constant("GamejoltAPI", "STATUS_OK", 0);
+	ObjectTypeDB::bind_integer_constant("GamejoltAPI", "STATUS_NOT_CONNECTED",
+			1);
+	ObjectTypeDB::bind_integer_constant("GamejoltAPI", "STATUS_CANT_CONNECT",
+		   	2);
+	ObjectTypeDB::bind_integer_constant("GamejoltAPI", 
+			"STATUS_CANT_READ_RESPONSE", 3);
+	ObjectTypeDB::bind_integer_constant("GamejoltAPI", 
+			"STATUS_REQUEST_FAILED", 4);
+	ObjectTypeDB::bind_integer_constant("GamejoltAPI", 
+			"STATUS_PARSING_ERROR", 5);
+	ObjectTypeDB::bind_integer_constant("GamejoltAPI", 
+			"STATUS_CANT_SEND_REQUEST", 6);
+	ObjectTypeDB::bind_integer_constant("GamejoltAPI", 
+			"STATUS_NO_RESPONSE", 7);
+	ObjectTypeDB::bind_integer_constant("GamejoltAPI", 
+			"STATUS_NO_CREDENTIALS", 8);
 }
+
 
 bool GamejoltAPI::Init(String gameId, String privateKey)
 {
 	Error err = m_client.connect("www.gamejolt.com", 80);
 	if (err != OK)
 	{
-		m_status = "error connecting: " + itos(err);
-		print_line(m_status);
+		m_statusStr = "error connecting: " + itos(err);
+		print_line(m_statusStr);
+		m_status = STATUS_CANT_CONNECT;
 		return false;
 	}
 
-	m_status = "connecting";
+	m_statusStr = "connecting";
 	while(m_client.get_status()==HTTPClient::STATUS_CONNECTING || 
 			m_client.get_status()==HTTPClient::STATUS_RESOLVING)
 	{
@@ -45,14 +68,16 @@ bool GamejoltAPI::Init(String gameId, String privateKey)
 	}
 	if ( m_client.get_status() != HTTPClient::STATUS_CONNECTED )
 	{
-		m_status = "Failed to connect. HTTPclient status: " +
+		m_statusStr = "Failed to connect. HTTPclient status: " +
 			itos(m_client.get_status());
 
-		print_line("GamejoltAPI::Init(): " + m_status);
+		print_line("GamejoltAPI::Init(): " + m_statusStr);
+		m_status = STATUS_CANT_CONNECT;
 		return false;
 	}
 	print_line("GamejoltAPI::Connected!");
-	m_status = "ok";
+	m_statusStr = "ok";
+	m_status = STATUS_OK;
 	m_gameId = gameId;
 	m_privateKey = privateKey;
 	return true;
@@ -60,30 +85,35 @@ bool GamejoltAPI::Init(String gameId, String privateKey)
 
 bool GamejoltAPI::Login(String username, String userToken)
 {
+	m_status = STATUS_OK;
 	if (m_client.get_status() != HTTPClient::STATUS_CONNECTED)
 	{
-		m_status = "GamejoltAPI::Login(): not connected";
-		print_line(m_status);
+		m_statusStr = "GamejoltAPI::Login(): not connected";
+		m_status = STATUS_NOT_CONNECTED; 
+		print_line(m_statusStr);
 		return false;
 	}
 	String url = "/api/game/v1/users/auth/?game_id="+
 		m_gameId+"&username="+username+"&user_token="+userToken;
-	m_status = "requesting authentification";
-	print_line(m_status);
-	m_status = "ok";
-	Dictionary response = Request(url);
+	m_statusStr = "requesting authentification";
+	print_line(m_statusStr);
+	m_statusStr = "ok";
+	Dictionary response = MakeRequest(url);
 	
-	if (m_status == "ok" && response["success"] == "true")
+	if (m_statusStr == "ok" && response["success"] == "true")
 	{
-		m_status = "ok";
+		m_statusStr = "ok";
 		m_userName = username;
 		m_userToken = userToken;
+		m_status = STATUS_OK;
 		return true;
 	}
 	else
 	{
-		if (m_status != "ok")
-			print_line(m_status+"1");
+		if (m_statusStr != "ok")
+			print_line(m_statusStr+"1");
+		else //if (response["success"] != "true")
+			m_status = STATUS_REQUEST_FAILED;
 		return false;
 	}
 }
@@ -102,7 +132,8 @@ Dictionary GamejoltAPI::ReadResponse()
 	}
 	if (str.length() == 0)
 	{
-		m_status = "GamejoltAPI::ReadResponse(): couldnt read response";
+		m_statusStr = "GamejoltAPI::ReadResponse(): couldnt read response";
+		m_status = STATUS_CANT_READ_RESPONSE;
 		return Dictionary();
 	}
 	print_line("unparsed: "+ str);
@@ -129,7 +160,8 @@ Dictionary GamejoltAPI::KeyPairParser::Parse(const String& str)
 		String value = ReadValue();
 		if (key == "" || value == "")
 		{
-			*mp_status = "Parsing error";
+			*mp_statusStr = "Parsing error";
+			*mp_status = STATUS_PARSING_ERROR;
 			return dict;
 		}
 		dict[key] = value;
@@ -176,15 +208,28 @@ void GamejoltAPI::Update()
 
 Dictionary GamejoltAPI::Request(String& url)
 {
+	if (m_client.get_status() != HTTPClient::STATUS_CONNECTED)
+	{
+		m_statusStr = "GamejoltAPI::Request(): not connected";
+		m_status = STATUS_NOT_CONNECTED; 
+		print_line(m_statusStr);
+		return false;
+	}
 	String urlCopy = "http://gamejolt.com"+url+m_privateKey;
 	String md5hash = "&signature="+urlCopy.md5_text();
 	url += md5hash;
-	print_line(url);
+//	print_line(url);
 	Vector<String> headers;
 	headers.push_back("User-Agent: Pirulo/1.0 (Godot)");
 	headers.push_back("Accept: */*");
 	Error result = m_client.request(HTTPClient::METHOD_GET, url, 
 		   headers);
+	if (result != OK)
+	{
+		m_status = STATUS_CANT_SEND_REQUEST;
+		m_statusStr = "GamejoltAPI::Request(): can't send request";
+		return Dictionary();
+	}
 	while (m_client.get_status() == HTTPClient::STATUS_REQUESTING)
 	{
 		m_client.poll();
@@ -196,21 +241,23 @@ Dictionary GamejoltAPI::Request(String& url)
 	Dictionary response;
 	if (m_client.has_response())
 	{
-		m_status = "ok";
+		m_statusStr = "ok";
+		m_status = STATUS_OK;
 		response = ReadResponse();
 
-		if (m_status != "ok")
+		if (m_statusStr != "ok")
 		{
 			return response;
 		}
 		String str = response["message"];
 		if (str != "")
-			m_status = str;
+			m_statusStr = str;
 	}
 	else
 	{
-		m_status = "GamejoltAPI::Request(): no response.";
-		print_line(m_status);
+		m_statusStr = "GamejoltAPI::Request(): no response.";
+		m_status = STATUS_NO_RESPONSE;
+		print_line(m_statusStr);
 	}
 
 	return response;
@@ -220,10 +267,12 @@ Dictionary GamejoltAPI::Request(String& url)
 bool GamejoltAPI::SendScore(int score, String scboardId,
 		String guestName)
 {
+	m_status = STATUS_OK;
 	if (m_client.get_status() != HTTPClient::STATUS_CONNECTED)
 	{
-		m_status = "GamejoltAPI::SendScore(): not connected";
-		print_line(m_status);
+		m_statusStr = "GamejoltAPI::SendScore(): not connected";
+		m_status = STATUS_NOT_CONNECTED;
+		print_line(m_statusStr);
 		return false;
 	}
 
@@ -236,9 +285,10 @@ bool GamejoltAPI::SendScore(int score, String scboardId,
 	{
 		if (m_userName.length() == 0 || m_userToken.length() == 0)
 		{
-			m_status = "GamejoltAPI::SendScore(): cant send score without \
+			m_statusStr = "GamejoltAPI::SendScore(): cant send score without \
 						logging in, or specifying guest name";
-			print_line(m_status);
+			print_line(m_statusStr);
+			m_status = STATUS_NO_CREDENTIALS;
 			return false;
 		}
 		url += "&username="+m_userName+"&user_token="+m_userToken;
@@ -247,12 +297,13 @@ bool GamejoltAPI::SendScore(int score, String scboardId,
 		url += "&guest="+guestName;
 	if (scboardId.length() > 0)
 		url += "&table_id="+scboardId;
-	Dictionary resp = Request(url);
-	if (m_status == "ok" && resp["success"] == "true")
+	Dictionary resp = MakeRequest(url);
+	if (m_statusStr == "ok" && resp["success"] == "true")
 		return true;
 	else
 	{
-		print_line(m_status);
+		print_line(m_statusStr);
+		m_status = STATUS_REQUEST_FAILED;
 		return false;
 	}
 }
@@ -266,4 +317,19 @@ String GamejoltAPI::FixStr(const String& str)
 			str1[i] = '+';
 	}
 	return str1;
+}
+
+Dictionary GamejoltAPI::MakeRequest(String& url)
+{
+	int tries = 0;
+	Dictionary resp = Request(url);
+	while (tries < 4 && (m_status != STATUS_OK || 
+				!(resp["success"] == "true")))
+	{
+		if (m_status == STATUS_NOT_CONNECTED)
+			Init(m_gameId, m_privateKey);
+		resp = Request(url);
+		tries++;
+	}
+	return resp;
 }
