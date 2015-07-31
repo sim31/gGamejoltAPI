@@ -20,7 +20,7 @@ public:
 		STATUS_PARSING_ERROR,
 		STATUS_CANT_SEND_REQUEST,
 		STATUS_NO_RESPONSE,
-		STATUS_NO_CREDENTIALS
+		STATUS_NO_CREDENTIALS,
 	};
 	bool Init(String gameId, String privateKey);
 	bool Login(String username, String userToken);
@@ -28,8 +28,16 @@ public:
 	//if guestName blank, username is used (from Login())
 	bool SendScore(int score, String scboardId = "", 
 			String guestName = ""); 
-	int GetUserBest();
-	int GetGuestBest(String guestName);
+	//if scores argument is default value, then scoretable is requested from server
+	//returned -1 means error
+	int GetUserBest(String scboard = "", Dictionary scores = Dictionary());
+	int GetGuestBest(String guestName, String scboard, 
+			Dictionary scores = Dictionary());
+	//returns score in scoretable in a multidimensional dictionary
+	//where first index shows index of score, second returned key
+	//ex: dict[0]["score"] - returns score string of first player
+	//parameter names can be found here: http://gamejolt.com/api/doc/game/scores/fetch
+	Dictionary GetScores(String table_id = "", int limit = 10);
 	void Update();
 	inline String GetStatusStr()
 	{
@@ -72,6 +80,7 @@ private:
 	private:
 		String m_currStr;
 		int ind;
+		int dict_ind;
 		String* mp_statusStr;
 		Status* mp_status;
 
@@ -79,11 +88,13 @@ private:
 		String ReadValue(); //reads next value, increments ind
 	public:
 		KeyPairParser(String* statusStr, Status* status) : 
-			ind(0), mp_statusStr(statusStr), mp_status(status) {}
+			ind(0), dict_ind(0), mp_statusStr(statusStr), mp_status(status) {}
 		Dictionary Parse(const String& str);
 	} m_parser;
 
 	String FixStr(const String& str);
+	bool IsConnected(String where);
+	int GetBest(const Dictionary& scores, const String& name);
 protected:
 	static void _bind_methods();	
 };
